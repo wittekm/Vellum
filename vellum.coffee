@@ -2,14 +2,15 @@
 Array::remove = (elem) -> 
     @[t..t] = [] if (t = @indexOf(elem)) > -1
 
+# analogous to c++'s std::find_if(itr, itr, pred)
 findIf = (arr, predicate) ->
     return elem for elem in arr when predicate(elem)
     return null
 
-
-# analogous to c++'s std::find_if(itr, itr, pred)
 Array::findIf = (predicate) ->
     findIf(this, predicate)
+
+
 
 ##### Actual code #####
 class Game
