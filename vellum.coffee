@@ -18,11 +18,12 @@ class Game
     msPerFrame: 1000/30
 
     constructor: ->
+        @dimensions = [document.width, document.height]
         @canvas = @getCanvas()
         @time = new Time
         @rootObject = new GameObject(this)
         canvas.addEventListener("click", @rootObject.reactToEvent, false);
-        window.addEventListener("keydown", @rootObject.reactToEvent, false);
+        canvas.addEventListener("mousemove", @rootObject.reactToEvent, false);
 
     run: ->
         setInterval @main, @msPerFrame
@@ -40,6 +41,7 @@ class Game
 
     update: ->
         @time.update()
+        @rootObject.update()
 
 class Time
     constructor: ->
@@ -86,16 +88,19 @@ class SpriteObject extends GameObject
         image.onload = => @ready = true
         @image = image
         [@dx, @dy] = 32
+        @scale = 1;
 
         super(@game)
 
     reactToEvent: ->
-        console.log("Spriteobject: " + event.type)
-        if(event.type == "click")
-            [@dx, @dy] = [event.x, event.y]
+        if(event.type == "mousemove")
+            [@dx, @dy] = [event.x - @scale / 2, event.y - @scale / 2]
         return true
 
     update: ->
+        @scale = @game.time.curTime % 2000 / 4
+        if(@scale > 250) 
+            @scale = 500 - @scale
         ###
         if(@vx != 0)
             @dx += @vx
@@ -106,8 +111,8 @@ class SpriteObject extends GameObject
     paint: ->
         if @ready
             ctx = @game.canvas.getContext("2d")
-            #ctx.drawImage(@image, sx, sy, 32, 32, dx, dy, @dw, @dh)
-            ctx.drawImage(@image, @dx, @dy)
+            #sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight
+            ctx.drawImage(@image, 200, 50, 150, 150, @dx, @dy, @scale, @scale)
         #super()
 
 game = new Game
