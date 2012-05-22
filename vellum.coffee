@@ -94,13 +94,12 @@ class SpriteObject extends GameObject
 
     reactToEvent: ->
         if(event.type == "mousemove")
-            [@dx, @dy] = [event.x - @scale / 2, event.y - @scale / 2]
+            [@dx, @dy] = [event.x, event.y]
         return true
 
     update: ->
-        @scale = @game.time.curTime % 2000 / 4
-        if(@scale > 250) 
-            @scale = 500 - @scale
+        @scale = @game.time.curTime % 2000 / 4 
+        @scale = 500 - @scale if(@scale > 250)
         ###
         if(@vx != 0)
             @dx += @vx
@@ -112,7 +111,7 @@ class SpriteObject extends GameObject
         if @ready
             ctx = @game.canvas.getContext("2d")
             #sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight
-            ctx.drawImage(@image, 200, 50, 150, 150, @dx, @dy, @scale, @scale)
+            ctx.drawImage(@image, 200, 50, 150, 150, @dx - @scale/2, @dy - @scale/2, @scale, @scale)
         #super()
 
 game = new Game
