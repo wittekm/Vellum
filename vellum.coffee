@@ -10,21 +10,22 @@ findIf = (arr, predicate) ->
 Array::findIf = (predicate) ->
     findIf(this, predicate)
 
-
+# jQuery setup
+$ = jQuery
 
 ##### Actual code #####
 class Game
-    dimensions: [640, 480]
-    # 10 frames per second
-    msPerFrame: 1000/30
+    dimensions: []
+    # denominator = frames per second
+    msPerFrame: 1000/60
 
     constructor: ->
-        @dimensions = [document.width, document.height]
+        @dimensions = [$(window).width() - 20, $(window).height() - 20]
         @canvas = @getCanvas()
+        console.log "canvas? " + @canvas? + " dimensions? " + @dimensions[1]
         @time = new Time
         @rootObject = new GameObject(this)
-        canvas.addEventListener("click", @rootObject.reactToEvent, false);
-        canvas.addEventListener("mousemove", @rootObject.reactToEvent, false);
+        @bindEvents()
 
     run: ->
         setInterval @main, @msPerFrame
@@ -32,13 +33,18 @@ class Game
     # Fat arrow because we call main from a different context 
     main: =>
         @update()
-        console.log "hey" + @time.deltaTime
+        console.log "delta time:" + @time.deltaTime
         @rootObject.paint()
 
     getCanvas: ->
-        canvas = document.getElementById 'canvas'
+        canvas = $("#canvas")[0]
         [canvas.width, canvas.height] = @dimensions
         canvas
+
+    bindEvents: ->
+        $(canvas).on('mousemove', @rootObject.reactToEvent)
+        $(canvas).on('mousedown', @rootObject.reactToEvent)
+        $(canvas).on('mouseup', @rootObject.reactToEvent)
 
     update: ->
         @time.update()
@@ -58,10 +64,8 @@ class GameObject
     constructor: (@game) ->
         @parent = null
         @children = []
-        console.log(@children.length)
         
     paint: ->
-        console.log(@children.length)
         child.paint() for child in @children
 
     update: ->
@@ -69,6 +73,7 @@ class GameObject
         
     # Searches children for a single child that accepts the event.
     reactToEvent: (event) =>
+        #console.log "Reacting to event"
         gameObject = @children.findIf( (child) -> child.reactToEvent(event))
         return gameObject?
         # oh my god coffeescript existence is beautiful
@@ -82,6 +87,7 @@ class GameObject
         child.parent = null
         @children.remove(child)
 
+
 class SpriteObject extends GameObject
     constructor: (@game, imageUrl) ->
         image = new Image
@@ -89,35 +95,47 @@ class SpriteObject extends GameObject
         image.onload = => @ready = true
         @image = image
         [@dx, @dy] = 32
-        @scale = 1;
+        @scale = 10;
+        @draw = false
+        @updateFuncs = []
 
         super(@game)
 
-    reactToEvent: ->
+    reactToEvent: (event) =>
+        @draw = true if event.type == "mousedown"
+        @draw = false if event.type == "mouseup"
+
         if(event.type == "mousemove")
-            [@dx, @dy] = [event.x, event.y]
-        return true
+            [@dx, @dy] = [event.pageX, event.pageY]
+            return true
+        else
+            return false
 
     update: ->
-        @scale = @game.time.curTime % 2000 / 4 
-        @scale = 500 - @scale if(@scale > 250)
-        ###
-        if(@vx != 0)
-            @dx += @vx
-        if(@vy != 0)
-            @vy += @vy
-        ###
+        console.log "UPDATE: " + Object.keys this
+        func.call(this) for func in @updateFuncs
+
+        @scale = (@game.time.curTime % 1000) / 10
+        # does the downwards scaling
+        @scale = 100 - @scale if(@scale > 50)
+        #give it a base size of 10
+        @scale += 10
+        # and then multiply it so it looks nice and big
+        @scale *= 2
 
     paint: ->
-        if @ready
+        if @ready && @draw
             ctx = @game.canvas.getContext("2d")
             #sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight
             ctx.drawImage(@image, 200, 50, 150, 150, @dx - @scale/2, @dy - @scale/2, @scale, @scale)
         #super()
 
-game = new Game
-sprite = new SpriteObject(game, "http://www-personal.umich.edu/~wittekm/uploads/burgerdog.jpg")
-obj = new GameObject(game)
-game.rootObject.addChild(sprite)
-game.run()
 
+$ ->
+    game = new Game
+    sprite = new SpriteObject(game, "http://www-personal.umich.edu/~wittekm/uploads/burgerdog.jpg")
+    sprite.updateFuncs.push -> 
+        console.log "testing. this in this context should be the s prite, but it isn't."
+    
+    game.rootObject.addChild(sprite)
+    game.run()
