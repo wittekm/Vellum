@@ -221,9 +221,9 @@ class GameObject extends Module
 
     # a static hash, acts like an enum
     @State: 
-        idle: 0
-        active: 1
-        destroyed: 2
+        idle: 0      # default state
+        active: 1    # perform input
+        destroyed: 2 # can be removed
 
     constructor: (@game) ->
         @state = GameObject.State.idle
@@ -249,6 +249,14 @@ class GameObject extends Module
         gameObject?
         # oh my god coffeescript existence is beautiful
 
+    setState: (newState) ->
+        oldState = @state
+        @state = newState
+        @changed "state", oldState, newState
+
+    isIdle:      -> @state == GameObject.State.idle
+    isActive:    -> @state == GameObject.State.active
+    isDestroyed: -> @state == GameObject.State.destroyed
 
     addChild: (child) ->
         @children.push(child)
