@@ -1,0 +1,19 @@
+{
+    "author": "wittekm",
+    "name": "Basic Map...",
+    "desc": "just an average map",
+    "rows": 5,
+    "cols": 5,
+    "size": 32,
+    "aliases": {
+        "g": "grass",
+        "w": "water"
+    },
+    "map": [
+        "ggggg",
+        "gggwg",
+        "gggwg",
+        "gggww",
+        "ggggw"
+    ]
+}

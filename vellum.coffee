@@ -48,10 +48,41 @@ class Module
     obj.included?.apply(@)
     this
 
+# A Model's functions must manually call changed, or set, if we care about propagating it to
+# their associated Views.
+class Model extends Module
+    constructor: ->
+        @propertyListeners = {}
+    addChangeListener: (property, listener) ->
+        @propertyListeners[property] ?= []
+        @propertyListeners[property].push listener
+    set: (property, newVal) =>
 
+    changed: (property, oldVal, newVal) =>
+        console.log "#{property} changed."
+        console.log @
+        if @propertyListeners[property]?
+            listener.inform(property, oldVal, newVal) for listener in @propertyListeners[property]
+
+class View extends Module
+    constructor: (@model, @propertyChangedCallbacks) ->
+        @registerListeningProperties()
+
+    registerListeningProperties: ->
+        for prop, callback of @propertyChangedCallbacks
+            console.log "#{@constructor.name} adding #{prop} listener to #{@model.constructor.name}"
+            @model.addChangeListener prop, this 
+
+    inform: (property, oldVal, newVal) =>
+        callback = @propertyChangedCallbacks[property]
+        Tools.Args.checkExists callback, "Callback for #{constructor.name}'s #{property} change"
+        callback(oldVal, newVal)
+ 
 ##### Actual code #####
 class Tools
-    @Args: class
+    @Args: class Args
+        @checkExists: (obj, msg="") ->
+            throw "Doesn't exist: #{msg}" if !(obj?)
         @checkNull: (obj) ->
             throw "Object null" if obj == null
 
@@ -83,10 +114,12 @@ class Game
         console.log "delta time:" + @time.deltaTime
 
         # Translate the canvas and paint the objects.
+        ###
         @ctx.save()
         @ctx.translate(@viewDimensions[0], @viewDimensions[1])
         @rootObject.paint()
         @ctx.restore();
+        ###
 
     getCanvas: ->
         canvas = $("#canvas")[0]
@@ -105,7 +138,6 @@ class Game
 
     update: ->
         @time.update()
-        @rootObject.update()
 
 class Time
     constructor: ->
@@ -150,17 +182,21 @@ PropertyChangeSupport =
     changed: (property, oldVal, newVal) =>
         console.log "#{property} changed."
 
-class AbstractLocation extends Module
+class AbstractLocation extends Model
     @include LocationInterface 
+    constructor: ->
+        super()
     getRow: => @row
     getCol: => @col
     locationString: -> "#{@row}, #{@col}"
     toString: -> @locationString()
 
 class Tile extends AbstractLocation
-    @include PropertyChangeSupport
+
     constructor: (@row, @col, @terrain, @fog = true) ->
+        super()
         @locatables = []
+
     canAdd: (locatable) -> locatable? && !(@contains locatable)
     contains: (locatable) -> locatable in @locatables
 
@@ -174,8 +210,9 @@ class Tile extends AbstractLocation
         if (removed = @locatables.remove locatable?)
             @changed "locatable", locatable, null
         removed 
+
     setTerrain: (newTerrain) ->
-        Tools.Args.checkForNull(newTerrain)
+        Tools.Args.checkNull(newTerrain)
         oldTerrain = @terrain
         @terrain = newTerrain
         @changed "terrain", oldTerrain, newTerrain
@@ -197,6 +234,18 @@ class Map
         @pathFinder = new PathFinder(this)
         @rules = new Rules
         @fill(@rows, @cols, baseTerrain)
+    
+    @mapFromJson: (url) ->
+        $.getJSON(url).success(@parseJsonRequest).error(@parseJsonError)
+
+    @parseJsonRequest: (data) =>
+        map = new Map(data.name, data.author, data.desc, data.rows, data.cols, data.size) 
+        console.log map
+        console.log "gotta get that map back somewhere useful."
+        
+    @parseJsonError: (data, xhr) =>
+        console.log data.statusText
+        console.log xhr
 
     init: ->
         rows = []
@@ -229,19 +278,6 @@ class GameObject extends Module
         @state = GameObject.State.idle
         @parent = null
         @children = []
-        
-    # Inheritors should override the self functions, not paint or update.
-    # Unless you wanna call super every time. That sucks!
-    paintSelf: ->
-    updateSelf: -> 
-
-    paint: ->
-        @paintSelf()
-        child.paint() for child in @children
-    
-    update: ->
-        @updateSelf()
-        child.update() for child in @children
         
     # Searches children for the first child that accepts the event.
     reactToEvent: (event) =>
@@ -276,7 +312,6 @@ class Hexagon extends GameObject
 
         super(@game)
 
-
     @precomputedSides:
         [
             [0.8660254037844387, 0.5] # cos and sin 30
@@ -287,7 +322,7 @@ class Hexagon extends GameObject
             [0.8660254037844387,-0.5]
         ]
     
-
+    ###
     paintSelf: ->
         ctx = @game.ctx
         #paint each side
@@ -299,9 +334,8 @@ class Hexagon extends GameObject
             x = @x_offset + @precomputedSides[next][0]*@radius;
             y = @y_offset + @precomputedSides[next][1]*@radius;
             ctx.lineTo(x, y);
-
-        
         ctx.stroke()
+    ###
                 
 class SpriteObject extends GameObject
     constructor: (@game, imageUrl) ->
@@ -329,6 +363,7 @@ class SpriteObject extends GameObject
         true
 
 
+    ###
     updateSelf: =>
         console.log "UPDATE: " + @constructor.name 
         script.update.call(this) for script in @scripts
@@ -338,6 +373,7 @@ class SpriteObject extends GameObject
             ctx = @game.ctx
             #sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight
             ctx.drawImage(@image, 200, 50, 150, 150, @dx - @scale/2, @dy - @scale/2, @scale, @scale)
+    ###
 
 class GameController
     constructor: (config) ->
@@ -353,6 +389,20 @@ class Script
     constructor: ->
         @update = ->
 
+
+
+class TileView extends View
+    constructor: (model) ->
+        propertyChangedCallbacks =
+            "fog": @fogChange
+            "terrain": @terrainChange
+        super(model, propertyChangedCallbacks) 
+
+    fogChange: (oldVal, newVal) -> console.log "new fog: #{newVal}"
+    terrainChange: (oldVal, newVal) -> console.log "new terrain: #{newVal}"
+
+map = Map.mapFromJson('maps/basic.json')
+
 $ ->
     game = new Game
     #hex = new Hexagon(game)
@@ -365,8 +415,12 @@ $ ->
 
     sprite.scripts.push(zoomyScript)
     game.rootObject.addChild(sprite)
-    map = new Map()
     tile = new Tile(0, 0, "grass", false)
+    tileView = new TileView(tile)
+
+    tile.setTerrain "grass"
+
+    console.log tile
 
     game.run()
 
