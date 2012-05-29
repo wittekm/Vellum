@@ -56,11 +56,15 @@ class Model extends Module
     addChangeListener: (property, listener) ->
         @propertyListeners[property] ?= []
         @propertyListeners[property].push listener
+
+    # Swaps the old value for the new value; then calls @changed
     set: (property, newVal) =>
+        oldVal = @[property]
+        @[property] = newVal
+        @changed property, oldVal, newVal
 
     changed: (property, oldVal, newVal) =>
         console.log "#{property} changed."
-        console.log @
         if @propertyListeners[property]?
             listener.inform(property, oldVal, newVal) for listener in @propertyListeners[property]
 
@@ -210,17 +214,12 @@ class Tile extends AbstractLocation
         if (removed = @locatables.remove locatable?)
             @changed "locatable", locatable, null
         removed 
-
     setTerrain: (newTerrain) ->
         Tools.Args.checkNull(newTerrain)
-        oldTerrain = @terrain
-        @terrain = newTerrain
-        @changed "terrain", oldTerrain, newTerrain
+        @set "terrain", newTerrain
 
     setFog: (newFog) ->
-        oldFog = @fog
-        @fog = newFog
-        @changed "fog", oldFog, newFog
+        @set "fog", newFog
     
     toString: -> "#{@locationString()}, fog: #{@fog}, terrain: #{@terrain}, locatables: #{@locatables}"
     # fill in some LocationInterface functions
