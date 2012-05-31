@@ -48,6 +48,9 @@ class Module
     obj.included?.apply(@)
     this
 
+
+##### MVC BOILERPLATE #####
+
 # A Model's functions must manually call changed, or set, if we care about propagating it to
 # their associated Views.
 class Model extends Module
@@ -79,16 +82,31 @@ class View extends Module
 
     inform: (property, oldVal, newVal) =>
         callback = @propertyChangedCallbacks[property]
-        Tools.Args.checkExists callback, "Callback for #{constructor.name}'s #{property} change"
+        Tools.Args.checkExists callback, "#{constructor.name}'s #{property} change callback"
         callback(oldVal, newVal)
  
 ##### Actual code #####
 class Tools
+    @CallbackSet: (property, val) ->
+        @[property] = val
     @Args: class Args
+        @intMax: 9007199254740992
         @checkExists: (obj, msg="") ->
             throw "Doesn't exist: #{msg}" if !(obj?)
         @checkNull: (obj) ->
             throw "Object null" if obj == null
+        @validateMinMax: (val, min, max, msg) ->
+            throw "Not within bounds: #{msg}" if !(min <= val <= max)
+        @betweenZeroAndIntMax: (amt) ->
+            return 0 if amt < 0
+            return Tools.Args.intMax if amt > Tools.Args.intMax
+        @assert: (bool, msg) ->
+            throw "Assert failed: #{msg}" if !msg
+        @assertNot: (bool, msg) ->
+            throw "Assert failed: #{msg}" if msg
+
+
+        
 
 class Game
     dimensions: []
@@ -152,13 +170,248 @@ class Time
         @curTime = Date.now()
         @deltaTime = @curTime - @oldTime
 
-class TurnBasedGame
-    constructor: ->
-        @map = []
-        @turn = []
-        @state = []
-        @currentPlayer = "me"
-        @players = []
+
+# TODO: come back ater i make Turn
+class TurnBasedGame extends Model
+
+    # a static hash, acts like an enum
+    @State: 
+        idle: 0      # default state
+        started: 1    # perform input
+        gameOver: 2 # can be removed
+
+    map: null
+    players: []
+    turn: null
+    currentPlayer: null
+    state: null
+
+    constructor: (@map, @players, daysLimit) ->
+        Tools.Args.checkNull @map
+        Tools.Args.checkNull @players
+        @turn = new Turn(daysLimit)
+        @state = TurnBasedGame.State.idle
+    startGame: (startingPlayer) ->
+        @startGameValidate startingPlayer
+        for player in @players
+            player.state = GameObject.State.active
+            @detectUnitFacingDirection player
+            for unit in player.units
+                unit.setDefaultOrientation()
+        @setCurrentPlayer startingPlayer
+        @setState TurnBasedGame.State.started
+        @startTurn @currentPlayer
+        console.log "Starting game with map #{map.name} has started"
+        # TODO got to the end of startGame.
+
+    setCurrentPlayer: (player) ->
+        @set "currentPlayer", player
+
+    setState: (state) ->
+        @set "state", state
+        
+    detectUnitFacingDirection: (player) ->
+        #TODO
+
+    startGameValidate: (startingPlayer) ->
+        throw "Game in illegal state" if @state != TurnBasedGame.State.idle 
+        throw "Game in illegal state: Turn limit reached" if turn.limitReached()
+        throw "Game in illegal state: unkown player" if !(@players.contains startingPlayer)
+        @validatePlayers()
+        @map.validate()
+    validatePlayers: ->
+        # number of players must equal map's number of players
+        # each player must be unique
+        # no player can be null
+        # no neutral players in player list
+        # compare with others:
+            # no same colors
+            # no same IDs
+
+class GameObject extends Model
+    # a static hash, acts like an enum
+    @State: 
+        idle: 0      # default state
+        active: 1    # perform input
+        destroyed: 2 # can be removed
+
+    constructor: (@game) ->
+        @state = GameObject.State.idle
+        @parent = null
+        @children = []
+        
+    # Searches children for the first child that accepts the event.
+    reactToEvent: (event) =>
+        gameObject = @children.findIf((child) -> child.reactToEvent(event))
+        gameObject?
+        # oh my god coffeescript existence is beautiful
+
+    setState: (newState) ->
+        @set "state", newState
+
+    isIdle:      -> @state == GameObject.State.idle
+    isActive:    -> @state == GameObject.State.active
+    isDestroyed: -> @state == GameObject.State.destroyed
+
+    addChild: (child) ->
+        @children.push(child)
+        child.parent = this
+
+    removeChild: (child) ->
+        child.parent = null
+        @children.remove(child)
+
+
+
+class Player extends GameObject
+    @neutralPlayerID: -1
+    @neutralTeam: -1
+    @dummyCOName: "Commander Shepard"
+    name: ""
+    id: 0
+    color: null # TODO: color.black or something
+    team: 0
+    ai: false
+    headquarters: null
+    commandingOfficer: null
+    unitFacingDirection: null #Unit.DEFAULT_ORIENTATION
+
+    budget: 0
+    units: []
+    structures: []
+    madeFirstUnit: false
+    coZone: [] # collection of locations
+
+    constructor: (@name="", @id=0, @color=null, 
+        @team=0, @ai=false, @commandingOfficer=null, @budget=0) ->
+
+    initWithUnnamedHumanPlayer:(@id, @color) ->
+        @name = "Anonymous"
+        @commandingOfficer = Player.createDummyCO()
+        @
+    initWithDummyCO: ->
+        @commandingOfficer = Player.createDummyCO()
+        @
+    @createNeutralPlayer: (color) ->
+        new Player("Neutral", Player.neutralPlayerID, color, 
+            Player.neutralTeam, false, Player.createDummyCO(), 0)
+
+    # TODO move into COFactory
+    @createDummyCO: ->
+        null; # TODO: new BasicCO(dummy CO name)
+    # TODO: copy constructor
+    startTurn: ->
+        unit.startTurn(@) for unit in @units
+        structure.startTurn(@) for structure in @structures
+    endTurn: ->
+        unit.endTurn(@) for unit in @units
+        structure.endTurn(@) for structure in @structures
+
+    destroy: (conqueror) ->
+        @setState GameObject.State.destroyed
+        @destroyUnits()
+        @changeStructureOwnersTo conqueror
+        console.log "#{name} destroyed, #{conqueror.name} takes all their cities"
+
+    # TODO refactor so we remove it in here imo
+    destroyUnits: ->
+        while @units.length != 0
+            lastUnit = @units[@units.length - 1]
+            lastUnit.destroy true # why does it accept a bool?
+
+    changeStructureOwnersTo: (player) ->
+        player.addStructure structure for structure in @structures
+        @structures = []
+
+    setBudget: (budget) ->
+        budget = Tools.Args.betweenZeroAndIntMax budget
+        @set "budget", budget
+    increaseBudgetBy: (incr) -> @setBudget(@budget + incr)
+
+    addStructure: (structure) ->
+        Tools.Args.checkNull structure, "Can't add a null structure"
+        Tools.Args.assertNot structure.contains structure, "Can't add structure twice"
+        @structures.push structure
+        structure.setOwner @
+        @headquarters = structure if structure.isHQ()
+        @changed "structures", null, structure
+    
+    hasStructure: (structure) -> structures.contains structure
+    removeStructure: (structure) ->
+        if (removed = @structures.remove structure)?
+            hq = null if structure.isHQ()
+            @changed "structures", removed, null
+        else console.log "Removing #{structure.toString()} failed..."
+        removed
+
+    getStructures: -> structures.clone() # TODO: do I even need to have this
+        
+    addUnit: (unit) ->
+        Tools.Args.checkNull unit, "Can't add a null unit"
+        Tools.Args.assertNot units.contains unit, "Can't add same unit twice!"
+        @madeFirstUnit = true if @units.length == 0
+        @units.push unit
+        unit.setOwner @
+        @changed "units", null, unit
+
+    hasUnit: (unit) -> units.contains unit
+    removeUnit: (unit) -> 
+        if (removed = @units.remove unit)?
+            @changed "units", removed, null
+        else console.log "Removing #{unit.toString()} failed..."
+        removed
+
+    getUnits: -> units.clone() # TODO: this too
+
+    ##### TODO: add CO stuff? nah imo #####
+    
+    setName: (name) -> @set "name", name
+    setHQ: (hq) -> @hq = hq
+    setUnitFacingDirection: (dir) ->
+        @unitFacingDirection = dir
+        #TODO: fire off a set?
+    setCOZone: (coZone) -> # TODO: what the hell is a CO Zone anyway
+        @coZone = coZone
+    numUnits: -> units.length
+    numStructures: -> structures.length
+    isNeutral: -> @team == Player.neutralTeam
+    isUnitless: -> @createdFirstUnit && (@numUnits() == 0) # areAllUnitsDestroyed
+
+    # TODO: am I adding Civ-like temporary treaties? Think about it. 
+    # Maybe have list of allies.
+    isAlly: (player) -> player.team == @team 
+    isWithinBudget: (amt) -> @budget - amt >= 0
+
+    # CO Zone stuff
+    isInCOZone: (loc) -> isCOLoaded() && (co.isInCOZone getCOUnit(), loc)
+    isCOLoaded: -> getCOUnit() != null
+    getCOUnit: -> 
+        return unit for unit in @units when unit.isCOOnBoard()
+        null
+    getCOZone: -> @coZone.clone()
+
+    toString: -> "Name: #{@name} ID: #{@id} State: #{@state} Color: #{@color.toString()}
+        Budget: #{@budget} Team: #{team} CO: #{co.getName()}"
+    printStats: -> "#{@color.toString()}, units: #{@numUnits()}, 
+        structures: #{@numStructures()}, HQ: #{if hq? then hq.toString() else hq}"
+
+
+
+
+
+class Turn extends Model
+    @unlimitedTurns: -1
+    daysLimit: -1 
+    turn: 0
+    day: 1
+    date: null
+
+    constructor: (@daysLimit, @turn = 0, @day = 1, @date = Date.now()) ->
+        Tools.Args.validateMinMax @daysLimit, -1, 1024, "Day Limit must be [0-1024] or UnlimitedTurns"
+    nextTurn: -> @turn++
+    nextDay:  -> @day++ # TODO: fix this
+    limitReached: -> false # TODO: fix this
+
 
 class PathFinder
     constructor: (@map) ->
@@ -166,14 +419,12 @@ class PathFinder
 class Rules
     constructor: ->
 
-# the following are all strictly in model territory
-
 LocationInterface = 
     canAdd: (locatable) ->
     add: (locatable) ->
-    remove: (locatable) -> # bool; if locatable has been removed
+    remove: (locatable) -> # TODO: decide if this returns obj/null or true/false
     contains: (locatable) ->
-    # i don't need the getters really
+    # i don't need the getters really...
     getLocatables: ->
     getRow: ->
     getCol: ->
@@ -187,33 +438,34 @@ PropertyChangeSupport =
         console.log "#{property} changed."
 
 class AbstractLocation extends Model
-    @include LocationInterface 
+    @extend LocationInterface 
     constructor: ->
         super()
-    getRow: => @row
-    getCol: => @col
+    getRow: -> @row
+    getCol: -> @col
     locationString: -> "#{@row}, #{@col}"
     toString: -> @locationString()
 
 class Tile extends AbstractLocation
-
     constructor: (@row, @col, @terrain, @fog = true) ->
         super()
         @locatables = []
 
-    canAdd: (locatable) -> locatable? && !(@contains locatable)
+    canAdd:   (locatable) -> locatable? && !(@contains locatable)
     contains: (locatable) -> locatable in @locatables
 
     add: (locatable) -> 
         if @canAdd locatable
             @locatables.push locatable
             locatable.setLocation @
-        @changed "locatable", null, locatable # move into the if?
+            @changed "locatable", null, locatable
+        @
 
     remove: (locatable) -> 
-        if (removed = @locatables.remove locatable?)
+        if (removed = @locatables.remove locatable)? # TODO: play with parens here maybe
             @changed "locatable", locatable, null
         removed 
+
     setTerrain: (newTerrain) ->
         Tools.Args.checkNull(newTerrain)
         @set "terrain", newTerrain
@@ -234,13 +486,17 @@ class Map
         @rules = new Rules
         @fill(@rows, @cols, baseTerrain)
     
-    @mapFromJson: (url) ->
-        $.getJSON(url).success(@parseJsonRequest).error(@parseJsonError)
+    @loadMapFromJson: (url, setterFunction) ->
+        $.getJSON(url)
+             # sets it to result of parsing the data
+            .success (data) => 
+                setterFunction @parseJsonMap data
 
-    @parseJsonRequest: (data) =>
+            .error @parseJsonError
+
+    @parseJsonMap: (data) =>
         map = new Map(data.name, data.author, data.desc, data.rows, data.cols, data.size) 
-        console.log map
-        console.log "gotta get that map back somewhere useful."
+      
         
     @parseJsonError: (data, xhr) =>
         console.log data.statusText
@@ -263,43 +519,6 @@ class Map
     
     fill: (terrain) ->
 
-
-class GameObject extends Module
-    @include PropertyChangeSupport
-
-    # a static hash, acts like an enum
-    @State: 
-        idle: 0      # default state
-        active: 1    # perform input
-        destroyed: 2 # can be removed
-
-    constructor: (@game) ->
-        @state = GameObject.State.idle
-        @parent = null
-        @children = []
-        
-    # Searches children for the first child that accepts the event.
-    reactToEvent: (event) =>
-        gameObject = @children.findIf((child) -> child.reactToEvent(event))
-        gameObject?
-        # oh my god coffeescript existence is beautiful
-
-    setState: (newState) ->
-        oldState = @state
-        @state = newState
-        @changed "state", oldState, newState
-
-    isIdle:      -> @state == GameObject.State.idle
-    isActive:    -> @state == GameObject.State.active
-    isDestroyed: -> @state == GameObject.State.destroyed
-
-    addChild: (child) ->
-        @children.push(child)
-        child.parent = this
-
-    removeChild: (child) ->
-        child.parent = null
-        @children.remove(child)
 
 class Hexagon extends GameObject
     constructor: (@game, @radius = 100) ->
@@ -388,8 +607,6 @@ class Script
     constructor: ->
         @update = ->
 
-
-
 class TileView extends View
     constructor: (model) ->
         propertyChangedCallbacks =
@@ -400,7 +617,16 @@ class TileView extends View
     fogChange: (oldVal, newVal) -> console.log "new fog: #{newVal}"
     terrainChange: (oldVal, newVal) -> console.log "new terrain: #{newVal}"
 
-map = Map.mapFromJson('maps/basic.json')
+map = null
+Map.loadMapFromJson 'maps/basic.json', (val) => 
+    map = val
+    @loaded()
+
+@loaded = ->
+    console.log "loaded #{map}!"
+    tbgame = new TurnBasedGame(window.map, ["us", "them"], 5)
+    window.map = map
+    console.log tbgame
 
 $ ->
     game = new Game
@@ -419,9 +645,9 @@ $ ->
 
     tile.setTerrain "grass"
 
-    console.log tile
+    console.log tile.toString()
 
-    game.run()
+    #game.run()
 
     $(canvas).on 'mousedown', (e) => 
         game.stop() if e.which == 3
