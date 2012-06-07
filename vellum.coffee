@@ -7,6 +7,9 @@ findIf = (arr, predicate) ->
     return elem for elem in arr when predicate(elem)
     return null
 
+# Magical bitwise stuff from the Little Book of CoffeeScript
+Array::contains = (obj) -> !!~ this.indexOf obj
+
 Array::findIf = (predicate) ->
     findIf(this, predicate)
 
@@ -60,6 +63,9 @@ class Model extends Module
         @propertyListeners[property] ?= []
         @propertyListeners[property].push listener
 
+    removeChangeListener: (property, listener) ->
+        @propertyListeners[property].remove listener
+
     # Swaps the old value for the new value; then calls @changed
     set: (property, newVal) =>
         oldVal = @[property]
@@ -67,9 +73,13 @@ class Model extends Module
         @changed property, oldVal, newVal
 
     changed: (property, oldVal, newVal) =>
+        @validateModel()
         console.log "#{property} changed."
         if @propertyListeners[property]?
             listener.inform(property, oldVal, newVal) for listener in @propertyListeners[property]
+
+    validateModel: ->
+        throw "@propertyListeners isn't set. Call super()." if !@propertyListeners?
 
 class View extends Module
     constructor: (@model, @propertyChangedCallbacks) ->
@@ -84,6 +94,14 @@ class View extends Module
         callback = @propertyChangedCallbacks[property]
         Tools.Args.checkExists callback, "#{constructor.name}'s #{property} change callback"
         callback(oldVal, newVal)
+
+    # Generates a mapping from properties "a" and "bee" 
+    # to member function "aChanged", "beeChanged"
+    generateCallbackMap: (properties...) ->
+        map = {}
+        map[prop] = @[prop + "Changed"] for prop in properties
+        map
+
  
 ##### Actual code #####
 class Tools
@@ -92,21 +110,27 @@ class Tools
     @Args: class Args
         @intMax: 9007199254740992
         @checkExists: (obj, msg="") ->
-            throw "Doesn't exist: #{msg}" if !(obj?)
+            throw new Err.BadArg "Doesn't exist: #{msg}" if !(obj?)
         @checkNull: (obj) ->
-            throw "Object null" if obj == null
+            throw new Err.BadArg "Object null" if obj == null
         @validateMinMax: (val, min, max, msg) ->
-            throw "Not within bounds: #{msg}" if !(min <= val <= max)
+            throw new Err.BadArg "Not within bounds: #{msg}" if !(min <= val <= max)
         @betweenZeroAndIntMax: (amt) ->
             return 0 if amt < 0
             return Tools.Args.intMax if amt > Tools.Args.intMax
-        @assert: (bool, msg) ->
-            throw "Assert failed: #{msg}" if !msg
-        @assertNot: (bool, msg) ->
-            throw "Assert failed: #{msg}" if msg
+        @assert: (bool, throwable) ->
+            throw throwable if !bool
+        @assertNot: (bool, throwable) ->
+            throw throwable if bool
 
+class Err
+    @BaseException: class BaseException
+        constructor: (@msg) ->
+    @Assertion:   class Assertion   extends Err.BaseException
+    @State:       class State       extends Err.BaseException
+    @BadArg:      class BadArg      extends Err.BaseException
+    @NotYourTurn: class NotYourTurn extends Err.BaseException
 
-        
 
 class Game
     dimensions: []
@@ -191,6 +215,8 @@ class TurnBasedGame extends Model
         Tools.Args.checkNull @players
         @turn = new Turn(daysLimit)
         @state = TurnBasedGame.State.idle
+        super()
+
     startGame: (startingPlayer) ->
         @startGameValidate startingPlayer
         for player in @players
@@ -205,6 +231,7 @@ class TurnBasedGame extends Model
         # TODO got to the end of startGame.
 
     setCurrentPlayer: (player) ->
+        console.log "Set current player: #{player}"
         @set "currentPlayer", player
 
     setState: (state) ->
@@ -212,22 +239,113 @@ class TurnBasedGame extends Model
         
     detectUnitFacingDirection: (player) ->
         #TODO
+    
+    endTurn: (player = @currentPlayer) ->
+        @endTurnValidate player
+        nextPlayer = @getNextCurrentPlayer player
+        @increaseTurn()
+        player.endTurn()
+        @map.endTurn(player)
+        @startTurn nextPlayer
+
+    increaseTurn: ->
+        oldTurnNumber = @turn.turn
+        @turn.nextTurn()
+
+        @turn.nextDay() if (@turn.turn % @getNumCurrentPlayers() == 0)
+
+        @setState TurnBasedGame.State.gameOver if @turn.limitReached()
+
+        # TODO: maybe change these to turn objects instead of the turn number
+        @changed "turn", oldTurnNumber, @turn.turn
+
+    startTurn: (player) ->
+        console.log "Day #{@turn.day}, starting turn for #{player.name}"
+        player.startTurn()
+        @map.startTurn player
+        @setCurrentPlayer player
+
+    changePlayerName: (oldName, newName) ->
+        p = @getPlayerByName oldName
+        p.setName newName
+    
+    getPlayerByID: (id) ->
+        return p for p in @players when p.id == id 
+        throw "Unknown Player ID: #{id}"
+
+    getPlayerByName: (name) ->
+        return p for p in @players when p.name == name
+        throw "Unknown Player Name: #{name}"
+
+    getCurrentPlayers: -> p for p in @players when p.isActive()
+    getNumCurrentPlayers: -> @getCurrentPlayers().length
+
+    getNextCurrentPlayer: (player) ->
+        nextPlayer = @getNextPlayer player
+        skippedCount = 0
+        while !nextPlayer.isActive()
+            nextPlayer = @getNextPlayer nextPlayer
+            if !@isWithinPlayerBounds ++skippedCount
+                throw new Error.AssertionError "All players skipped"
+        nextPlayer
+
+    getNextPlayer: (player) ->
+        nextPlayerIndex = (@players.indexOf player) % @players.length
+        @players[nextPlayerIndex]
+        
+    isIdle: -> @state == TurnBasedGame.State.idle
+    isStarted: -> @state == TurnBasedGame.State.started
+    isGameOver: -> @state == TurnBasedGame.State.gameOver
+    isWithinPlayerBounds: (index) -> 0 <= index < @players.length
+
+# Validation
 
     startGameValidate: (startingPlayer) ->
         throw "Game in illegal state" if @state != TurnBasedGame.State.idle 
-        throw "Game in illegal state: Turn limit reached" if turn.limitReached()
-        throw "Game in illegal state: unkown player" if !(@players.contains startingPlayer)
-        @validatePlayers()
+        throw "Game in illegal state: Turn limit reached" if @turn.limitReached()
+        throw "Game in illegal state: unknown player" if !(@players.contains startingPlayer)
+        @playersValidate()
         @map.validate()
-    validatePlayers: ->
+
+    endTurnValidate: (player) ->
+        Tools.Args.checkNull player, "Can't end turn with a null player"
+        Tools.Args.assert @isStarted(), new Err.State "Game must be started to end a turn!"
+        Tools.Args.assertNot @isGameOver(), new Err.State "Can't end turn of a finished Game"
+        Tools.Args.checkNull @currentPlayer, "Current player can't be null"
+
+        nextPlayer = @getNextCurrentPlayer @currentPlayer
+        Tools.Args.checkNull nextPlayer, "No next player"
+
+        Tools.Args.assert player == @currentPlayer, 
+            new Err.NotYourTurn "You aren't the current player, can't end turn!"
+
+
+    playersValidate: ->
         # number of players must equal map's number of players
+        #Tools.Args.assert @players.length == @map.getNumPlayers(), "Incorrect # of players"
+
         # each player must be unique
-        # no player can be null
-        # no neutral players in player list
-        # compare with others:
+        uniquePlayers = []
+        uniquePlayers.push p for p in @players when !uniquePlayers.contains p
+        Tools.Args.assert @players.length == uniquePlayers.length, 
+            "Each player must be unique"
+
+        # no player can be null; no neutral players in player list
+        for player in @players
+            Tools.Args.checkNull player, "Can't have a null player"
+            Tools.Args.assertNot player.isNeutral(), 
+                "Can't have a neutral player in player list"
+
+            # compare with others:
             # no same colors
             # no same IDs
-
+            for otherPlayer in @players
+                continue if otherPlayer == player 
+                Tools.Args.assertNot otherPlayer.color == player.color, 
+                    "Two players have the same color"
+                Tools.Args.assertNot otherPlayer.id == player.id, 
+                    "Two players have same ID"
+    
 class GameObject extends Model
     # a static hash, acts like an enum
     @State: 
@@ -390,8 +508,8 @@ class Player extends GameObject
         null
     getCOZone: -> @coZone.clone()
 
-    toString: -> "Name: #{@name} ID: #{@id} State: #{@state} Color: #{@color.toString()}
-        Budget: #{@budget} Team: #{team} CO: #{co.getName()}"
+    toString: -> "Name: #{@name} ID: #{@id} State: #{@state} Color: #{@color}
+        Budget: #{@budget} Team: #{@team} CO: #{@co.getName() if @co?}"
     printStats: -> "#{@color.toString()}, units: #{@numUnits()}, 
         structures: #{@numStructures()}, HQ: #{if hq? then hq.toString() else hq}"
 
@@ -419,15 +537,17 @@ class PathFinder
 class Rules
     constructor: ->
 
+# TODO: this @extend may not work right
 LocationInterface = 
     canAdd: (locatable) ->
     add: (locatable) ->
     remove: (locatable) -> # TODO: decide if this returns obj/null or true/false
     contains: (locatable) ->
     # i don't need the getters really...
-    getLocatables: ->
-    getRow: ->
-    getCol: ->
+    getLocatables: -> @locatables
+
+    getRow: -> @row
+    getCol: -> @col
     toString: ->
 
 LocatableInterface = 
@@ -472,6 +592,10 @@ class Tile extends AbstractLocation
 
     setFog: (newFog) ->
         @set "fog", newFog
+
+    getLastLocatable: -> 
+        size = @locatables.length
+        if size == 0 then return null else return @locatables[size-1]
     
     toString: -> "#{@locationString()}, fog: #{@fog}, terrain: #{@terrain}, locatables: #{@locatables}"
     # fill in some LocationInterface functions
@@ -514,11 +638,54 @@ class Map
     surroundingTiles: (center, range) ->
         []
     
+    # TODO
+    startTurn: (player) ->
+
+    # TODO
+    endTurn: (player) ->
+
+
     setTile: (x, y, tile) ->
         @tiles[x][y] = tile 
     
     fill: (terrain) ->
+        for row in [0..@rows-1]
+            for col in [0..@cols-1]
+                tile = new Tile row, col, terrain #, fog = true
+                @setTile row, col, tile
 
+    unitOn: (location) ->
+        locatable = location.getLastLocatable()
+        if locatable instanceof Unit then return locatable else return null
+
+    cityOn: (location) ->
+        terrain = location.terrain
+        if terrain instanceof City then return terrain else return null
+
+    forEachTile: (func) ->
+        for row in @tiles
+            for tile in row
+                func tile
+
+    getUniquePlayers: ->
+        players = {}
+        @forEachTile (tile) =>
+            unit = @unitOn tile
+            city = @cityOn tile
+            if unit != null && !unit.owner.isNeutral()
+                players[unit.owner] = true
+            if city != null && !city.owner.isNeutral()
+                players[unit.owner] = true
+        
+    getNumPlayers: ->
+        @getUniquePlayers().length
+
+    # Validation
+    # TODO
+    validate: -> true
+
+class Unit
+class City
 
 class Hexagon extends GameObject
     constructor: (@game, @radius = 100) ->
@@ -617,16 +784,39 @@ class TileView extends View
     fogChange: (oldVal, newVal) -> console.log "new fog: #{newVal}"
     terrainChange: (oldVal, newVal) -> console.log "new terrain: #{newVal}"
 
+
+
+
+
+
+
+
 map = null
 Map.loadMapFromJson 'maps/basic.json', (val) => 
     map = val
     @loaded()
 
+# Just a basic View to demonstrate the pub/sub model/view thing I've got going on
+class TBGameView extends View
+    constructor: (model) ->
+        #callbacks = {"currentPlayer": @currentPlayerChanged}
+        callbacks = @generateCallbackMap "currentPlayer" # equivalent
+        super(model, callbacks)
+    currentPlayerChanged: (oldVal, newVal) =>
+        console.log "TBGameView acknowledges the player changed"
+
 @loaded = ->
     console.log "loaded #{map}!"
-    tbgame = new TurnBasedGame(window.map, ["us", "them"], 5)
     window.map = map
-    console.log tbgame
+    playerMax = new Player "Max", 1, "#880088", 1, false, null, 20
+    playerThem = new Player "Them", 2, "#008800", 2, false, null, 20
+
+    tbgame = new TurnBasedGame(window.map, [playerMax, playerThem], 5)
+    tbgameView = new TBGameView(tbgame)
+    console.log "Alright, starting game"
+    tbgame.startGame tbgame.players[0]
+    tbgame.endTurn()
+
 
 $ ->
     game = new Game
