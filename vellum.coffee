@@ -51,6 +51,10 @@ class Module
     obj.included?.apply(@)
     this
 
+  log: (str) ->
+    # return
+    console.log "[#{@.constructor.name}]: #{str}"
+
 
 ##### MVC BOILERPLATE #####
 
@@ -227,11 +231,11 @@ class TurnBasedGame extends Model
         @setCurrentPlayer startingPlayer
         @setState TurnBasedGame.State.started
         @startTurn @currentPlayer
-        console.log "Starting game with map #{map.name} has started"
+        @log "Starting game with map #{map.name} has started"
         # TODO got to the end of startGame.
 
     setCurrentPlayer: (player) ->
-        console.log "Set current player: #{player}"
+        @log "Set current player: #{player.name}"
         @set "currentPlayer", player
 
     setState: (state) ->
@@ -290,7 +294,7 @@ class TurnBasedGame extends Model
         nextPlayer
 
     getNextPlayer: (player) ->
-        nextPlayerIndex = (@players.indexOf player) % @players.length
+        nextPlayerIndex = ((@players.indexOf player)+1) % @players.length
         @players[nextPlayerIndex]
         
     isIdle: -> @state == TurnBasedGame.State.idle
@@ -800,10 +804,12 @@ Map.loadMapFromJson 'maps/basic.json', (val) =>
 class TBGameView extends View
     constructor: (model) ->
         #callbacks = {"currentPlayer": @currentPlayerChanged}
-        callbacks = @generateCallbackMap "currentPlayer" # equivalent
+        callbacks = @generateCallbackMap "currentPlayer", "turn" # equivalent
         super(model, callbacks)
     currentPlayerChanged: (oldVal, newVal) =>
-        console.log "TBGameView acknowledges the player changed"
+        @log "Player changed to #{newVal.name or "none"}"
+    turnChanged: (oldVal, newVal) =>
+        @log "Turn changed to #{newVal}"
 
 @loaded = ->
     console.log "loaded #{map}!"
@@ -815,6 +821,8 @@ class TBGameView extends View
     tbgameView = new TBGameView(tbgame)
     console.log "Alright, starting game"
     tbgame.startGame tbgame.players[0]
+    console.log "Ending turn..."
+    tbgame.endTurn()
     tbgame.endTurn()
 
 
