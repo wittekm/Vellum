@@ -518,9 +518,6 @@ class Player extends GameObject
         structures: #{@numStructures()}, HQ: #{if hq? then hq.toString() else hq}"
 
 
-
-
-
 class Turn extends Model
     @unlimitedTurns: -1
     daysLimit: -1 
@@ -571,7 +568,7 @@ class AbstractLocation extends Model
     toString: -> @locationString()
 
 class Tile extends AbstractLocation
-    constructor: (@row, @col, @terrain, @fog = true) ->
+    constructor: (@col, @row, @terrain, @fog = true) ->
         super()
         @locatables = []
 
@@ -602,10 +599,104 @@ class Tile extends AbstractLocation
         if size == 0 then return null else return @locatables[size-1]
     
     toString: -> "#{@locationString()}, fog: #{@fog}, terrain: #{@terrain}, locatables: #{@locatables}"
+    isEven: -> @row%2 == 0
+    isOdd: -> @row%2 == 1
     # fill in some LocationInterface functions
 
 class Terrain extends Module
     @include PropertyChangeSupport
+
+class MapTools
+    @HexDirections:
+        "E"  : 0
+        "SE" : 1
+        "SW" : 2
+        "W"  : 3
+        "NW" : 4
+        "NE" : 5
+
+    @HexDirsEven:
+        "E"  : [1,0]
+        "W"  : [-1,0]
+        "SE" : [0,1]
+        "SW" : [-1,1]
+        "NW" : [-1,-1]
+        "NE" : [0,-1]
+
+    @HexDirsOdd:
+        "E"  : [1,0]
+        "W"  : [-1,0]
+        "SE" : [1,1]
+        "SW" : [0,1]
+        "NW" : [0,-1]
+        "NE" : [1,-1] # what the shit that aint right
+
+    constructor: (@map) ->
+
+    surroundingTiles: (location, minRange, maxRange) ->
+        if (!@map.isValid location) || (minRange == 0) || (maxRange == 0)
+            return []
+
+        if maxRange == 1
+            @adjacentTiles location
+        else
+            @spiralTiles location, minRange, maxRange
+
+    adjacentTiles: (location) ->
+        tiles = []
+        for dir, val of MapTools.HexDirections
+            tile = @getRelativeTile location, dir
+            tiles.push tile if tile != null
+        tiles
+
+    # TODO: works great for (_, 1, 3) but not (_, 2, 3)
+    spiralTiles: (location, minRange, maxRange) ->
+        tiles = []
+        x = location.col
+        y = location.row
+        [minCol, maxCol] = [x - maxRange, x + maxRange]
+
+        # Do everything in the original row
+        for i in [minCol..maxCol]
+            tiles.push (@map.getTile i,y) if (i != x) and (@map.isWithinBounds i, y)
+
+        for yOffset in [minRange..maxRange]
+            if (y + yOffset)%2 == 1 then maxCol-- else minCol++
+            for i in [minCol..maxCol]
+                above = y-yOffset
+                below = y+yOffset
+                tiles.push (@map.getTile i, below) if (@map.isWithinBounds i, below)
+                tiles.push (@map.getTile i, above) if (@map.isWithinBounds i, above)
+
+        tiles
+
+
+
+        ###
+        tilesToScan = [location]
+        tiles = []
+        while minRange <= maxRange
+            nextTilesToScan = []
+            for tile in tilesToScan
+                adjacents = @adjacentTiles tile
+                nextTilesToScan = _.union nextTilesToScan, 
+                tiles = _.union tiles, 
+        ###
+
+            
+    getRelativeTile: (location, dir) ->
+        dirsMap = if location.isEven() then MapTools.HexDirsEven else MapTools.HexDirsOdd
+        dirXY = dirsMap[dir] # {1, 0} or something
+
+        [x, y] = [location.getCol() + dirXY[0], location.getRow() + dirXY[1]]
+        if @map.isWithinBounds x, y
+            @map.getTile x, y
+        else
+            null
+
+
+
+
 
 class Map
     constructor: (@name = "", @author = "", @desc = "", @rows, @cols, @size, baseTerrain = "grass") ->
@@ -613,6 +704,7 @@ class Map
         @pathFinder = new PathFinder(this)
         @rules = new Rules
         @fill(@rows, @cols, baseTerrain)
+        @mapTools = new MapTools(@)
     
     @loadMapFromJson: (url, setterFunction) ->
         $.getJSON(url)
@@ -639,15 +731,17 @@ class Map
         rows
 
     # center tile is not included.
-    surroundingTiles: (center, range) ->
-        []
-    
+    surroundingTiles: (location, minRange, maxRange) -> 
+        @mapTools.surroundingTiles location, minRange, maxRange
+
     # TODO
     startTurn: (player) ->
 
     # TODO
     endTurn: (player) ->
 
+
+    getTile: (x, y) -> @tiles[x][y]
 
     setTile: (x, y, tile) ->
         @tiles[x][y] = tile 
@@ -662,34 +756,84 @@ class Map
         locatable = location.getLastLocatable()
         if locatable instanceof Unit then return locatable else return null
 
-    cityOn: (location) ->
+    structureOn: (location) ->
         terrain = location.terrain
-        if terrain instanceof City then return terrain else return null
+        if terrain instanceof Structure then return terrain else return null
 
     forEachTile: (func) ->
         for row in @tiles
             for tile in row
-                func tile
+                func.call(@,tile)
 
     getUniquePlayers: ->
         players = {}
         @forEachTile (tile) =>
             unit = @unitOn tile
-            city = @cityOn tile
+            structure = @structureOn tile
             if unit != null && !unit.owner.isNeutral()
                 players[unit.owner] = true
-            if city != null && !city.owner.isNeutral()
-                players[unit.owner] = true
+            if structure != null && !structure.owner.isNeutral()
+                players[structure.owner] = true
         
     getNumPlayers: ->
         @getUniquePlayers().length
 
     # Validation
+    validate: -> 
+        @forEachTile (tile) ->
+            structure = @structureOn tile
+            unit = @unitOn tile
+            loc = tile.locationString()
+
+            if structure != null
+                Tools.Args.checkNull structure.location, "Structure has no location"
+                Tools.Args.assert structure.location == tile, "Wrong location for structure"
+                Tools.Args.checkNull structure.owner, "Structure on #{loc} is ownerless"
+
+            if unit != null
+                # TODO diverged a bit from the original here
+                Tools.Args.assert tile.locatables.length == 1, "Wrong # locatables on #{loc}"
+                Tools.Args.checkNull unit.location, "Unit has no location"
+                Tools.Args.assert unit.location == tile, "Wrong location for structure"
+                Tools.Args.checkNull unit.owner, "Unit on #{loc} is ownerless"
+
+    isValid: (location) -> @isLocationInBounds location
+    isLocationInBounds: (location) -> 
+        location != null and @isWithinBounds location.getRow(), location.getCol()
+    isWithinBounds: (col, row) -> (0 <= row < @rows) and (0 <= col < @cols)
+    
+    initWithOtherMap: (other) ->
+        [@name, @author, @desc] = [other.name, other.author, other.desc]
+        [@rows, @cols, @size] = [other.rows, other.cols, other.size]
+        @tiles = @init()
+        @fill (other.getTile 0,0).terrain
+        @rules = new Rules().initWithOtherRules other.rules
+        # TODO: fog of war?
+        # TODO: copyMapData(otherMap)
+        # TODO: copyPlayers()
+        @
+
+    # Fog of war. A unit is unhidden if:
+    # + Member of current player's units
+    # + Adjacent to current player's units or structures
+    # TODO: perhaps add more? dunno.
+    handleUnitHide: (unit, player) ->
+        if unit.canHide()
+            allied = unit.isAlliedWith player
+            adjacentAlly = @hasAdjacentAlly unit.location, player
+
+            # Don't hide if either of these are the case.
+            unit.setHidden !(allied || adjacentAlly)
+
     # TODO
-    validate: -> true
+    hasAdjacentAlly: (location, player) -> true
+
+
+        
+
 
 class Unit
-class City
+class Structure
 
 class Hexagon extends GameObject
     constructor: (@game, @radius = 100) ->
@@ -780,17 +924,27 @@ class Script
 
 class TileView extends View
     constructor: (model) ->
+        @ctx = window.game.ctx
+        size = window.tbgame.map.size
+        @dimensions = [model.getCol() * size, model.getRow() * size,
+            size - 5, size - 5]
+        
+        if model.isOdd()
+            @dimensions[0] += size/2
+        
+        @ctx.fillRect.apply @ctx, @dimensions
+
         propertyChangedCallbacks =
             "fog": @fogChange
             "terrain": @terrainChange
         super(model, propertyChangedCallbacks) 
 
-    fogChange: (oldVal, newVal) -> console.log "new fog: #{newVal}"
+    fogChange: (oldVal, newVal) => 
+        console.log "new fog: #{newVal}"
+        @ctx.fillStyle = "#880000";
+        @ctx.fillRect.apply @ctx, @dimensions
+        @ctx.fillStyle = "#000000";
     terrainChange: (oldVal, newVal) -> console.log "new terrain: #{newVal}"
-
-
-
-
 
 
 
@@ -818,16 +972,24 @@ class TBGameView extends View
     playerThem = new Player "Them", 2, "#008800", 2, false, null, 20
 
     tbgame = new TurnBasedGame(window.map, [playerMax, playerThem], 5)
+    window.tbgame = tbgame
     tbgameView = new TBGameView(tbgame)
-    console.log "Alright, starting game"
     tbgame.startGame tbgame.players[0]
-    console.log "Ending turn..."
     tbgame.endTurn()
     tbgame.endTurn()
 
+    views = []
+    tbgame.map.forEachTile (tile) =>
+        view = new TileView(tile)
+        views.push view
+
+    surr = tbgame.map.surroundingTiles tbgame.map.getTile(4,4), 1, 3
+    for tile in surr
+        tile.setFog true
 
 $ ->
     game = new Game
+    window.game = game
     #hex = new Hexagon(game)
     sprite = new SpriteObject(game, "http://www-personal.umich.edu/~wittekm/uploads/burgerdog.jpg")
     zoomyScript = new Script

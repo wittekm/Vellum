@@ -2,8 +2,8 @@
     "author": "wittekm",
     "name": "Basic Map...",
     "desc": "just an average map",
-    "rows": 5,
-    "cols": 5,
+    "rows": 10,
+    "cols": 10,
     "size": 32,
     "aliases": {
         "g": "grass",
