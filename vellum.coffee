@@ -77,7 +77,7 @@ class Model extends Module
         @changed property, oldVal, newVal
 
     changed: (property, oldVal, newVal) =>
-        @validateModel()
+        @validateModel() # TODO: eventually delete this line for production
         console.log "#{property} changed."
         if @propertyListeners[property]?
             listener.inform(property, oldVal, newVal) for listener in @propertyListeners[property]
@@ -640,20 +640,35 @@ class MapTools
         if maxRange == 1
             @adjacentTiles location
         else
-            @spiralTiles location, minRange, maxRange
+            @tilesInRange location, minRange, maxRange
 
     adjacentTiles: (location) ->
         tiles = []
         for dir, val of MapTools.HexDirections
-            tile = @getRelativeTile location, dir
+            tile = @getNeighborTile location, dir
             tiles.push tile if tile != null
         tiles
 
+    # Distance is equal to the greatest of the absolute values of: 
+    # + the difference along the x-axis
+    # + the difference along the y-axis
+    # + the difference of these two differences.
+    #       http://3dmdesign.com/development/hexmap-coordinates-the-easy-way
+
+    # TODO: START FROM HERE
+    distBetween: (locA, locB) ->
+      xDelta = Math.abs(locA.getRow() - locB.getRow())
+      yDelta = Math.abs(locA.getCol() - locB.getCol())
+      xDelta + yDelta
+      # TODO: add the difference of these two differences?
+
+
+
     # TODO: works great for (_, 1, 3) but not (_, 2, 3)
-    spiralTiles: (location, minRange, maxRange) ->
+    tilesInRange: (location, minRange, maxRange) ->
         tiles = []
-        x = location.col
-        y = location.row
+        x = location.getCol()
+        y = location.getRow()
         [minCol, maxCol] = [x - maxRange, x + maxRange]
 
         # Do everything in the original row
@@ -684,7 +699,7 @@ class MapTools
         ###
 
             
-    getRelativeTile: (location, dir) ->
+    getNeighborTile: (location, dir) ->
         dirsMap = if location.isEven() then MapTools.HexDirsEven else MapTools.HexDirsOdd
         dirXY = dirsMap[dir] # {1, 0} or something
 
@@ -928,6 +943,11 @@ class TileView extends View
         size = window.tbgame.map.size
         @dimensions = [model.getCol() * size, model.getRow() * size,
             size - 5, size - 5]
+        @bounds = 
+            sx: @dimensions[0]
+            sy: @dimensions[1]
+            ex: @dimensions[0] + @dimensions[2]
+            ey: @dimensions[1] + @dimensions[3]
         
         if model.isOdd()
             @dimensions[0] += size/2
@@ -946,7 +966,55 @@ class TileView extends View
         @ctx.fillStyle = "#000000";
     terrainChange: (oldVal, newVal) -> console.log "new terrain: #{newVal}"
 
+class TileController
+    constructor: (@view) ->
+    withinViewBounds: (evt) ->
+        @view.bounds.sx <= evt.pageX < @view.bounds.ex &&
+        @view.bounds.sy <= evt.pageY < @view.bounds.ey
+        
+    reactToEvent: (evt) =>
+        switch event.type
+            when "mousedown"
+                alert "over here!" if @withinViewBounds evt
+            when "mouseup"
+                @draw = false
+            when "mousemove"
+                [@dx, @dy] = [event.pageX, event.pageY]
+            else
+                return false
+        true
 
+###
+# the Clix system is inspired by Sid Meier's Civilization. As described
+# by him: 
+"Clix system
+InitClix()
+AddClix(clix, x, y, dx, dy) (a rect)
+GetClix(x, y) will tell you which ClixID you're over.
+I really like that. Simple. Does it for 3d units as well.
+Does it every frame in his version." 
+###
+
+class ClixManager
+    constructor: ->
+        @reset()
+    reset: ->
+        @clixes = []
+    addClix: (clix) -> 
+        console.log @
+        @clixes.push clix
+    getClix: (x, y) => 
+        clix = @clixes.findIf( (clix) => @withinBounds(clix, x, y))
+        clix
+    withinBounds: (clix, x, y) ->
+        clix.startX <= x < clix.endX and
+        clix.startY <= y < clix.endY
+
+
+class Clix
+    constructor: (@callback, @startX, @startY, @endX, @endY) ->
+    initWithRect: (@startX, @startY, sizeX, sizeY) ->
+        [@endX, @endY] = [@startX + sizeX, @startY + sizeY]
 
 
 map = null
@@ -955,7 +1023,7 @@ Map.loadMapFromJson 'maps/basic.json', (val) =>
     @loaded()
 
 # Just a basic View to demonstrate the pub/sub model/view thing I've got going on
-class TBGameView extends View
+class TurnBasedGameView extends View
     constructor: (model) ->
         #callbacks = {"currentPlayer": @currentPlayerChanged}
         callbacks = @generateCallbackMap "currentPlayer", "turn" # equivalent
@@ -964,6 +1032,8 @@ class TBGameView extends View
         @log "Player changed to #{newVal.name or "none"}"
     turnChanged: (oldVal, newVal) =>
         @log "Turn changed to #{newVal}"
+    generateClix: ->
+
 
 @loaded = ->
     console.log "loaded #{map}!"
@@ -973,10 +1043,16 @@ class TBGameView extends View
 
     tbgame = new TurnBasedGame(window.map, [playerMax, playerThem], 5)
     window.tbgame = tbgame
-    tbgameView = new TBGameView(tbgame)
+    tbgameView = new TurnBasedGameView(tbgame)
     tbgame.startGame tbgame.players[0]
     tbgame.endTurn()
     tbgame.endTurn()
+
+    clixManager = new ClixManager
+    window.clixManager = clixManager
+
+    clixManager.addClix new Clix (=> console.log "Clix responded!"), 0, 0, 50, 50
+    $(canvas).on 'mousedown', (evt) -> console.log (clixManager.getClix evt.pageX, evt.pageY)?
 
     views = []
     tbgame.map.forEachTile (tile) =>
@@ -986,6 +1062,15 @@ class TBGameView extends View
     surr = tbgame.map.surroundingTiles tbgame.map.getTile(4,4), 1, 3
     for tile in surr
         tile.setFog true
+
+    controller = new TileController(views[0])
+    #window.bindEvents( controller )
+
+@bindEvents = (reactor) ->
+    $(canvas).on 'mousemove' , reactor.reactToEvent
+    $(canvas).on 'mousedown' , reactor.reactToEvent
+    $(canvas).on 'mouseup'   , reactor.reactToEvent
+    #$(document).on 'keydown' , @viewDimensionsScroll 
 
 $ ->
     game = new Game
@@ -1000,12 +1085,15 @@ $ ->
 
     sprite.scripts.push(zoomyScript)
     game.rootObject.addChild(sprite)
+
+    ###
     tile = new Tile(0, 0, "grass", false)
     tileView = new TileView(tile)
 
     tile.setTerrain "grass"
 
     console.log tile.toString()
+    ###
 
     #game.run()
 
