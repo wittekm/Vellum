@@ -142,9 +142,10 @@ class Game
     msPerFrame: 1000/2
 
     constructor: ->
-        @dimensions = [$(window).width() - 20, $(window).height() - 20]
+        @dimensions = [$(window).width() - 200, $(window).height() - 200]
         @viewDimensions = [0,0]
         @canvas = @getCanvas()
+        @outputDiv = @getOutputDiv()
         @ctx = @canvas.getContext('2d')
 
         @time = new Time
@@ -175,6 +176,12 @@ class Game
         canvas = $("#canvas")[0]
         [canvas.width, canvas.height] = @dimensions
         canvas
+
+    getOutputDiv: -> 
+        $("#output")
+
+    output: (str) ->
+        @outputDiv.html("#{@outputDiv.html()}<br />#{str}")
 
     bindEvents: ->
         $(canvas).on 'mousemove' , @rootObject.reactToEvent
@@ -992,7 +999,7 @@ InitClix()
 AddClix(clix, x, y, dx, dy) (a rect)
 GetClix(x, y) will tell you which ClixID you're over.
 I really like that. Simple. Does it for 3d units as well.
-Does it every frame in his version." 
+reinitializes all clixes every frame in his version." 
 ###
 
 class ClixManager
@@ -1016,12 +1023,6 @@ class Clix
     initWithRect: (@startX, @startY, sizeX, sizeY) ->
         [@endX, @endY] = [@startX + sizeX, @startY + sizeY]
 
-
-map = null
-Map.loadMapFromJson 'maps/basic.json', (val) => 
-    map = val
-    @loaded()
-
 # Just a basic View to demonstrate the pub/sub model/view thing I've got going on
 class TurnBasedGameView extends View
     constructor: (model) ->
@@ -1035,7 +1036,7 @@ class TurnBasedGameView extends View
     generateClix: ->
 
 
-@loaded = ->
+@loaded = (map)->
     console.log "loaded #{map}!"
     window.map = map
     playerMax = new Player "Max", 1, "#880088", 1, false, null, 20
@@ -1048,11 +1049,19 @@ class TurnBasedGameView extends View
     tbgame.endTurn()
     tbgame.endTurn()
 
+
+    # TODO: Playing around with Clix system
+    # TODO: Organize Clix by Z-order?
     clixManager = new ClixManager
     window.clixManager = clixManager
 
-    clixManager.addClix new Clix (=> console.log "Clix responded!"), 0, 0, 50, 50
-    $(canvas).on 'mousedown', (evt) -> console.log (clixManager.getClix evt.pageX, evt.pageY)?
+    clixManager.addClix new Clix (=> window.game.output "Clix responded!"), 0, 0, 50, 50
+
+    $(canvas).on 'mousedown', (evt) ->
+        clix = clixManager.getClix evt.pageX, evt.pageY
+        console.log "Is there a Clix here? #{clix?}"
+        clix?.callback()
+
 
     views = []
     tbgame.map.forEachTile (tile) =>
@@ -1073,29 +1082,11 @@ class TurnBasedGameView extends View
     #$(document).on 'keydown' , @viewDimensionsScroll 
 
 $ ->
-    game = new Game
-    window.game = game
-    #hex = new Hexagon(game)
-    sprite = new SpriteObject(game, "http://www-personal.umich.edu/~wittekm/uploads/burgerdog.jpg")
-    zoomyScript = new Script
-    zoomyScript.update = -> 
-        @scale = (@game.time.curTime % 1000) / 10
-        @scale = 100 - @scale if(@scale > 50)
-        @scale = ( @scale + 10 ) * 1.5 #give it a lowest amount and a default scale
-
-    sprite.scripts.push(zoomyScript)
-    game.rootObject.addChild(sprite)
-
-    ###
-    tile = new Tile(0, 0, "grass", false)
-    tileView = new TileView(tile)
-
-    tile.setTerrain "grass"
-
-    console.log tile.toString()
-    ###
-
-    #game.run()
+    window.game = new Game
 
     $(canvas).on 'mousedown', (e) => 
         game.stop() if e.which == 3
+
+    Map.loadMapFromJson 'maps/basic.json', (map) => 
+        window.loaded(map)
+
