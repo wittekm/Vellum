@@ -31,6 +31,12 @@ Array::multByConst = (constant) ->
 # jQuery setup
 $ = jQuery
 
+# shit I should eventually wrap in a globals or something
+SX = 0
+SY = 1
+EX = 2
+EY = 3
+
 
 ##### mixins #####
 moduleKeywords = ['extended', 'included']
@@ -142,7 +148,7 @@ class Game
     msPerFrame: 1000/2
 
     constructor: ->
-        @dimensions = [$(window).width() - 200, $(window).height() - 200]
+        @dimensions = [$(window).width()*0.85 , $(window).height()*0.85]
         @viewDimensions = [0,0]
         @canvas = @getCanvas()
         @outputDiv = @getOutputDiv()
@@ -575,7 +581,7 @@ class AbstractLocation extends Model
     toString: -> @locationString()
 
 class Tile extends AbstractLocation
-    constructor: (@col, @row, @terrain, @fog = true) ->
+    constructor: (@col, @row, @terrain, @fog = false) ->
         super()
         @locatables = []
 
@@ -600,6 +606,9 @@ class Tile extends AbstractLocation
 
     setFog: (newFog) ->
         @set "fog", newFog
+
+    toggleFog: ->
+        @setFog !@fog
 
     getLastLocatable: -> 
         size = @locatables.length
@@ -733,12 +742,10 @@ class Map
              # sets it to result of parsing the data
             .success (data) => 
                 setterFunction @parseJsonMap data
-
             .error @parseJsonError
 
     @parseJsonMap: (data) =>
         map = new Map(data.name, data.author, data.desc, data.rows, data.cols, data.size) 
-      
         
     @parseJsonError: (data, xhr) =>
         console.log data.statusText
@@ -950,35 +957,49 @@ class TileView extends View
         size = window.tbgame.map.size
         @dimensions = [model.getCol() * size, model.getRow() * size,
             size - 5, size - 5]
-        @bounds = 
-            sx: @dimensions[0]
-            sy: @dimensions[1]
-            ex: @dimensions[0] + @dimensions[2]
-            ey: @dimensions[1] + @dimensions[3]
-        
         if model.isOdd()
             @dimensions[0] += size/2
-        
-        @ctx.fillRect.apply @ctx, @dimensions
+
+        @bounds = [
+            @dimensions[0],
+            @dimensions[1],
+            @dimensions[0] + @dimensions[2],
+            @dimensions[1] + @dimensions[3]
+        ] # sx, sy, ex, ey
 
         propertyChangedCallbacks =
             "fog": @fogChange
             "terrain": @terrainChange
+        @setFogColor(model.fog)
         super(model, propertyChangedCallbacks) 
 
     fogChange: (oldVal, newVal) => 
         console.log "new fog: #{newVal}"
-        @ctx.fillStyle = "#880000";
+        @setFogColor newVal
+        @draw()
+
+    setFogColor: (fog) ->
+        @fogColor = if fog then "#FF00FF" else "#000000"
+
+    terrainChange: (oldVal, newVal) -> 
+        console.log "new terrain: #{newVal}"
+
+    draw: ->
+        @ctx.fillStyle = @fogColor
         @ctx.fillRect.apply @ctx, @dimensions
-        @ctx.fillStyle = "#000000";
-    terrainChange: (oldVal, newVal) -> console.log "new terrain: #{newVal}"
+        @ctx.fillStyle = "#000000"
+
+
+
 
 class TileController
     constructor: (@view) ->
+        @model = @view.model
+
     withinViewBounds: (evt) ->
-        @view.bounds.sx <= evt.pageX < @view.bounds.ex &&
-        @view.bounds.sy <= evt.pageY < @view.bounds.ey
-        
+        @view.bounds[SX] <= evt.pageX < @view.bounds[EX] &&
+        @view.bounds[SY] <= evt.pageY < @view.bounds[EY]
+
     reactToEvent: (evt) =>
         switch event.type
             when "mousedown"
@@ -990,6 +1011,16 @@ class TileController
             else
                 return false
         true
+
+    reactTo: (clix) =>
+        @model.toggleFog()
+        window.game.output("(#{@model.row}, #{@model.col}) fog: #{@model.fog}")
+        for tile in window.tbgame.map.surroundingTiles @model, 1, 1
+            tile.toggleFog()
+
+
+    getClix: ->
+        @clix ||= new Clix(@reactTo).initWithBounds(@view.bounds)
 
 ###
 # the Clix system is inspired by Sid Meier's Civilization. As described
@@ -1022,6 +1053,10 @@ class Clix
     constructor: (@callback, @startX, @startY, @endX, @endY) ->
     initWithRect: (@startX, @startY, sizeX, sizeY) ->
         [@endX, @endY] = [@startX + sizeX, @startY + sizeY]
+        @
+    initWithBounds: (bounds) ->
+        [@startX, @startY, @endX, @endY] = [bounds[SX], bounds[SY], bounds[EX], bounds[EY]]
+        @
 
 # Just a basic View to demonstrate the pub/sub model/view thing I've got going on
 class TurnBasedGameView extends View
@@ -1055,24 +1090,29 @@ class TurnBasedGameView extends View
     clixManager = new ClixManager
     window.clixManager = clixManager
 
-    clixManager.addClix new Clix (=> window.game.output "Clix responded!"), 0, 0, 50, 50
-
     $(canvas).on 'mousedown', (evt) ->
         clix = clixManager.getClix evt.pageX, evt.pageY
         console.log "Is there a Clix here? #{clix?}"
-        clix?.callback()
-
+        clix?.callback.call(clix)
 
     views = []
     tbgame.map.forEachTile (tile) =>
-        view = new TileView(tile)
-        views.push view
+        tileView = new TileView(tile)
+        tileController = new TileController(tileView)
+        views.push tileView
+        clix = tileController.getClix()
+        console.log "clix: "
+        console.log clix
+        clixManager.addClix clix
+
+    for view in views
+        view.draw()
 
     surr = tbgame.map.surroundingTiles tbgame.map.getTile(4,4), 1, 3
     for tile in surr
         tile.setFog true
 
-    controller = new TileController(views[0])
+    #controller = new TileController(views[0])
     #window.bindEvents( controller )
 
 @bindEvents = (reactor) ->
