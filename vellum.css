@@ -1,0 +1,11 @@
+#output {
+    min-width: 10%;
+    min-height: 10%;
+    float: right;
+    background: #ddd;
+    border: 1px solid #aaa;
+}
+
+#canvas {
+    float: left;
+}
