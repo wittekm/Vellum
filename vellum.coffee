@@ -37,7 +37,6 @@ SY = 1
 EX = 2
 EY = 3
 
-
 ##### mixins #####
 moduleKeywords = ['extended', 'included']
 
@@ -65,7 +64,7 @@ class Module
 ##### MVC BOILERPLATE #####
 
 # A Model's functions must manually call changed, or set, if we care about propagating it to
-# their associated Views.
+# their associated Controllers.
 class Model extends Module
     constructor: ->
         @propertyListeners = {}
@@ -91,8 +90,13 @@ class Model extends Module
     validateModel: ->
         throw "@propertyListeners isn't set. Call super()." if !@propertyListeners?
 
-class View extends Module
-    constructor: (@model, @propertyChangedCallbacks) ->
+class View
+    constructor: (@model) ->
+    draw: ->
+        throw "Draw not initialized yet"
+
+class Controller extends Module
+    constructor: (@model, @view, @propertyChangedCallbacks) ->
         @registerListeningProperties()
 
     registerListeningProperties: ->
@@ -111,7 +115,6 @@ class View extends Module
         map = {}
         map[prop] = @[prop + "Changed"] for prop in properties
         map
-
  
 ##### Actual code #####
 class Tools
@@ -157,6 +160,7 @@ class Game
         @time = new Time
         @rootObject = new GameObject(this)
         @bindEvents()
+        @drawables = []
 
     run: ->
         @intervalID = setInterval @main, @msPerFrame
@@ -169,12 +173,12 @@ class Game
     main: =>
         @update()
         console.log "delta time:" + @time.deltaTime
-
+        for drawable in @drawables
+            drawable.draw()
         # Translate the canvas and paint the objects.
         ###
         @ctx.save()
         @ctx.translate(@viewDimensions[0], @viewDimensions[1])
-        @rootObject.paint()
         @ctx.restore();
         ###
 
@@ -396,7 +400,9 @@ class GameObject extends Model
         child.parent = null
         @children.remove(child)
 
-
+class Script
+    constructor: ->
+        @update = ->
 
 class Player extends GameObject
     @neutralPlayerID: -1
@@ -530,7 +536,6 @@ class Player extends GameObject
     printStats: -> "#{@color.toString()}, units: #{@numUnits()}, 
         structures: #{@numStructures()}, HQ: #{if hq? then hq.toString() else hq}"
 
-
 class Turn extends Model
     @unlimitedTurns: -1
     daysLimit: -1 
@@ -618,6 +623,73 @@ class Tile extends AbstractLocation
     isEven: -> @row%2 == 0
     isOdd: -> @row%2 == 1
     # fill in some LocationInterface functions
+
+class TileView 
+    constructor: (model) ->
+        @ctx = window.game.ctx
+        size = window.tbgame.map.size
+        @dimensions = [model.getCol() * size, model.getRow() * size,
+            size - 5, size - 5]
+        if model.isOdd()
+            @dimensions[0] += size/2
+
+        @bounds = [
+            @dimensions[0],
+            @dimensions[1],
+            @dimensions[0] + @dimensions[2],
+            @dimensions[1] + @dimensions[3]
+        ] # sx, sy, ex, ey
+
+        @setFogColor(model.fog)
+
+    setFogColor: (fog) ->
+        @fogColor = if fog then "#FF00FF" else "#000000"
+
+    draw: ->
+        @ctx.fillStyle = @fogColor
+        @ctx.fillRect.apply @ctx, @dimensions
+        @ctx.fillStyle = "#000000"
+
+class TileController extends Controller
+    constructor: (model, view) ->
+        propertyChangedCallbacks =
+            "fog": @fogChange
+            "terrain": @terrainChange
+        super(model, view, propertyChangedCallbacks) 
+
+    withinViewBounds: (evt) ->
+        @view.bounds[SX] <= evt.pageX < @view.bounds[EX] &&
+        @view.bounds[SY] <= evt.pageY < @view.bounds[EY]
+
+    reactToEvent: (evt) =>
+        switch event.type
+            when "mousedown"
+                alert "over here!" if @withinViewBounds evt
+            when "mouseup"
+                @draw = false
+            when "mousemove"
+                [@dx, @dy] = [event.pageX, event.pageY]
+            else
+                return false
+        true
+
+    reactTo: (clix) =>
+        @model.toggleFog()
+        window.game.output("(#{@model.row}, #{@model.col}) fog: #{@model.fog}")
+        for tile in window.tbgame.map.surroundingTiles @model, 1, 1
+            tile.toggleFog()
+
+    getClix: ->
+        @clix ||= new Clix(@reactTo).initWithBounds(@view.bounds)
+
+    fogChange: (oldVal, newVal) => 
+        console.log "new fog: #{newVal}"
+        @view.setFogColor newVal
+
+    terrainChange: (oldVal, newVal) -> 
+        console.log "new terrain: #{newVal}"
+
+
 
 class Terrain extends Module
     @include PropertyChangeSupport
@@ -724,10 +796,6 @@ class MapTools
             @map.getTile x, y
         else
             null
-
-
-
-
 
 class Map
     constructor: (@name = "", @author = "", @desc = "", @rows, @cols, @size, baseTerrain = "grass") ->
@@ -857,170 +925,9 @@ class Map
     # TODO
     hasAdjacentAlly: (location, player) -> true
 
-
-        
-
-
 class Unit
 class Structure
 
-class Hexagon extends GameObject
-    constructor: (@game, @radius = 100) ->
-        @x_offset = 0
-        @y_offset = 0
-        @precomputedWithRadius = Hexagon.precomputedSides.multByConst(@radius)
-        @width = @precomputedWithRadius[0][0] * 2
-        @height = @radius * 2
-
-        super(@game)
-
-    @precomputedSides:
-        [
-            [0.8660254037844387, 0.5] # cos and sin 30
-            [0, 1]                    # cos and sin 90
-            [-0.8660254037844387,0.5]
-            [-0.8660254037844387,-0.5]
-            [0,-1]
-            [0.8660254037844387,-0.5]
-        ]
-    
-    ###
-    paintSelf: ->
-        ctx = @game.ctx
-        #paint each side
-        for i in [0..5]
-            x = @x_offset + @precomputedSides[i][0]*@radius;
-            y = @y_offset + @precomputedSides[i][1]*@radius;
-            ctx.moveTo(x, y);
-            next = (i+1)%6
-            x = @x_offset + @precomputedSides[next][0]*@radius;
-            y = @y_offset + @precomputedSides[next][1]*@radius;
-            ctx.lineTo(x, y);
-        ctx.stroke()
-    ###
-                
-class SpriteObject extends GameObject
-    constructor: (@game, imageUrl) ->
-        image = new Image
-        image.src = imageUrl
-        image.onload = => @ready = true
-        @image = image
-        [@dx, @dy] = 32
-        @scale = 10
-        @draw = false
-        @scripts = []
-
-        super(@game)
-
-    reactToEvent: (event) =>
-        switch event.type
-            when "mousedown"
-                @draw = true
-            when "mouseup"
-                @draw = false
-            when "mousemove"
-                [@dx, @dy] = [event.pageX, event.pageY]
-            else
-                return false
-        true
-
-
-    ###
-    updateSelf: =>
-        console.log "UPDATE: " + @constructor.name 
-        script.update.call(this) for script in @scripts
-
-    paintSelf: ->
-        if @ready && @draw
-            ctx = @game.ctx
-            #sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight
-            ctx.drawImage(@image, 200, 50, 150, 150, @dx - @scale/2, @dy - @scale/2, @scale, @scale)
-    ###
-
-class GameController
-    constructor: (config) ->
-        @map = []
-
-class GameView
-    constructor: (@gameController) ->
-        @mapView = @createMapView()
-    createMapView:
-        {}
-
-class Script
-    constructor: ->
-        @update = ->
-
-class TileView extends View
-    constructor: (model) ->
-        @ctx = window.game.ctx
-        size = window.tbgame.map.size
-        @dimensions = [model.getCol() * size, model.getRow() * size,
-            size - 5, size - 5]
-        if model.isOdd()
-            @dimensions[0] += size/2
-
-        @bounds = [
-            @dimensions[0],
-            @dimensions[1],
-            @dimensions[0] + @dimensions[2],
-            @dimensions[1] + @dimensions[3]
-        ] # sx, sy, ex, ey
-
-        propertyChangedCallbacks =
-            "fog": @fogChange
-            "terrain": @terrainChange
-        @setFogColor(model.fog)
-        super(model, propertyChangedCallbacks) 
-
-    fogChange: (oldVal, newVal) => 
-        console.log "new fog: #{newVal}"
-        @setFogColor newVal
-        @draw()
-
-    setFogColor: (fog) ->
-        @fogColor = if fog then "#FF00FF" else "#000000"
-
-    terrainChange: (oldVal, newVal) -> 
-        console.log "new terrain: #{newVal}"
-
-    draw: ->
-        @ctx.fillStyle = @fogColor
-        @ctx.fillRect.apply @ctx, @dimensions
-        @ctx.fillStyle = "#000000"
-
-
-
-
-class TileController
-    constructor: (@view) ->
-        @model = @view.model
-
-    withinViewBounds: (evt) ->
-        @view.bounds[SX] <= evt.pageX < @view.bounds[EX] &&
-        @view.bounds[SY] <= evt.pageY < @view.bounds[EY]
-
-    reactToEvent: (evt) =>
-        switch event.type
-            when "mousedown"
-                alert "over here!" if @withinViewBounds evt
-            when "mouseup"
-                @draw = false
-            when "mousemove"
-                [@dx, @dy] = [event.pageX, event.pageY]
-            else
-                return false
-        true
-
-    reactTo: (clix) =>
-        @model.toggleFog()
-        window.game.output("(#{@model.row}, #{@model.col}) fog: #{@model.fog}")
-        for tile in window.tbgame.map.surroundingTiles @model, 1, 1
-            tile.toggleFog()
-
-
-    getClix: ->
-        @clix ||= new Clix(@reactTo).initWithBounds(@view.bounds)
 
 ###
 # the Clix system is inspired by Sid Meier's Civilization. As described
@@ -1058,12 +965,14 @@ class Clix
         [@startX, @startY, @endX, @endY] = [bounds[SX], bounds[SY], bounds[EX], bounds[EY]]
         @
 
-# Just a basic View to demonstrate the pub/sub model/view thing I've got going on
 class TurnBasedGameView extends View
     constructor: (model) ->
-        #callbacks = {"currentPlayer": @currentPlayerChanged}
+        super(model) # required?
+
+class TurnBasedGameController extends Controller
+    constructor: (model, view) ->
         callbacks = @generateCallbackMap "currentPlayer", "turn" # equivalent
-        super(model, callbacks)
+        super(model, view, callbacks)
     currentPlayerChanged: (oldVal, newVal) =>
         @log "Player changed to #{newVal.name or "none"}"
     turnChanged: (oldVal, newVal) =>
@@ -1078,12 +987,12 @@ class TurnBasedGameView extends View
     playerThem = new Player "Them", 2, "#008800", 2, false, null, 20
 
     tbgame = new TurnBasedGame(window.map, [playerMax, playerThem], 5)
-    window.tbgame = tbgame
     tbgameView = new TurnBasedGameView(tbgame)
+    tbgameController = new TurnBasedGameController(tbgame, tbgameView)
+    window.tbgame = tbgame
     tbgame.startGame tbgame.players[0]
     tbgame.endTurn()
     tbgame.endTurn()
-
 
     # TODO: Playing around with Clix system
     # TODO: Organize Clix by Z-order?
@@ -1093,33 +1002,26 @@ class TurnBasedGameView extends View
     $(canvas).on 'mousedown', (evt) ->
         clix = clixManager.getClix evt.pageX, evt.pageY
         console.log "Is there a Clix here? #{clix?}"
-        clix?.callback.call(clix)
+        clix?.callback.call(clix, evt)
 
-    views = []
+    controllers = []
     tbgame.map.forEachTile (tile) =>
         tileView = new TileView(tile)
-        tileController = new TileController(tileView)
-        views.push tileView
+        tileController = new TileController(tile, tileView)
+        controllers.push tileController
         clix = tileController.getClix()
         console.log "clix: "
         console.log clix
         clixManager.addClix clix
 
-    for view in views
-        view.draw()
+    for controller in controllers
+        window.game.drawables.push controller.view
+        controller.view.draw()
 
     surr = tbgame.map.surroundingTiles tbgame.map.getTile(4,4), 1, 3
     for tile in surr
         tile.setFog true
-
-    #controller = new TileController(views[0])
-    #window.bindEvents( controller )
-
-@bindEvents = (reactor) ->
-    $(canvas).on 'mousemove' , reactor.reactToEvent
-    $(canvas).on 'mousedown' , reactor.reactToEvent
-    $(canvas).on 'mouseup'   , reactor.reactToEvent
-    #$(document).on 'keydown' , @viewDimensionsScroll 
+    window.game.run()
 
 $ ->
     window.game = new Game
