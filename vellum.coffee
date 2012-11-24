@@ -172,6 +172,7 @@ class Game
     # Fat arrow because we call main from a different context 
     main: =>
         @update()
+        @ctx.clearRect(0,0,500,500)
         console.log "delta time:" + @time.deltaTime
         for drawable in @drawables
             drawable.draw()
@@ -629,7 +630,7 @@ class TileView
         @ctx = window.game.ctx
         size = window.tbgame.map.size
         @dimensions = [model.getCol() * size, model.getRow() * size,
-            size - 5, size - 5]
+            size - 1, size - 1]
         if model.isOdd()
             @dimensions[0] += size/2
 
@@ -646,9 +647,17 @@ class TileView
         @fogColor = if fog then "#FF00FF" else "#000000"
 
     draw: ->
+        @hex ||= (
+            hex = new Hexagon(window.game, 15).initWithBounds(@bounds)
+        )
         @ctx.fillStyle = @fogColor
-        @ctx.fillRect.apply @ctx, @dimensions
-        @ctx.fillStyle = "#000000"
+        @hex.draw()
+
+        # show the clickable area
+        @ctx.fillStyle = "rgba(100, 100, 100, 0.2)"
+        @ctx.fillRect(@dimensions[0], @dimensions[1], @dimensions[2], @dimensions[3])
+
+
 
 class TileController extends Controller
     constructor: (model, view) ->
@@ -690,6 +699,44 @@ class TileController extends Controller
         console.log "new terrain: #{newVal}"
 
 
+
+class Hexagon
+    @precomputedSides = [
+            [0.8660254037844387, 0.5] # cos and sin 30
+            [0, 1]                    # cos and sin 90
+            [-0.8660254037844387,0.5]
+            [-0.8660254037844387,-0.5]
+            [0,-1]
+            [0.8660254037844387,-0.5]
+        ]
+
+    constructor: (@game, @radius = 100) ->
+        @x_offset = 0
+        @y_offset = 0
+        @precomputedWithRadius = Hexagon.precomputedSides.multByConst(@radius)
+        @width = @precomputedWithRadius[0][0] * 2
+        @height = @radius * 2
+
+    initWithBounds: (bounds) ->
+        @x_offset = bounds[SX] + (@precomputedWithRadius[0][0])
+        @y_offset = bounds[SY] + @radius
+        @
+
+    
+    draw: ->
+        ctx = @game.ctx
+        #paint each side
+        ctx.beginPath()
+        for i in [0..5]
+            x = @x_offset + @precomputedWithRadius[i][0]
+            y = @y_offset + @precomputedWithRadius[i][1]
+            if(i == 0) then ctx.moveTo(x, y)
+            next = (i+1)%6
+            x = @x_offset + @precomputedWithRadius[next][0]
+            y = @y_offset + @precomputedWithRadius[next][1]
+            ctx.lineTo(x, y)
+        ctx.closePath()
+        ctx.fill()
 
 class Terrain extends Module
     @include PropertyChangeSupport

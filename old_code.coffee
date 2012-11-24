@@ -24,41 +24,6 @@
 
     #game.run()
 
-
-class Hexagon extends GameObject
-    constructor: (@game, @radius = 100) ->
-        @x_offset = 0
-        @y_offset = 0
-        @precomputedWithRadius = Hexagon.precomputedSides.multByConst(@radius)
-        @width = @precomputedWithRadius[0][0] * 2
-        @height = @radius * 2
-
-        super(@game)
-
-    @precomputedSides:
-        [
-            [0.8660254037844387, 0.5] # cos and sin 30
-            [0, 1]                    # cos and sin 90
-            [-0.8660254037844387,0.5]
-            [-0.8660254037844387,-0.5]
-            [0,-1]
-            [0.8660254037844387,-0.5]
-        ]
-    
-    ###
-    paintSelf: ->
-        ctx = @game.ctx
-        #paint each side
-        for i in [0..5]
-            x = @x_offset + @precomputedSides[i][0]*@radius;
-            y = @y_offset + @precomputedSides[i][1]*@radius;
-            ctx.moveTo(x, y);
-            next = (i+1)%6
-            x = @x_offset + @precomputedSides[next][0]*@radius;
-            y = @y_offset + @precomputedSides[next][1]*@radius;
-            ctx.lineTo(x, y);
-        ctx.stroke()
-    ###
                 
 class SpriteObject extends GameObject
     constructor: (@game, imageUrl) ->
