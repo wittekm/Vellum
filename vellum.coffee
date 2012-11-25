@@ -28,6 +28,8 @@ Array::multByConst = (constant) ->
             clone.push elem * constant
     clone
 
+Number::toThe = (num) -> Math.pow(this, num)
+
 # jQuery setup
 $ = jQuery
 
@@ -628,11 +630,11 @@ class Tile extends AbstractLocation
 class TileView 
     constructor: (model) ->
         @ctx = window.game.ctx
-        size = window.tbgame.map.size
-        @dimensions = [model.getCol() * size, model.getRow() * size,
-            size - 1, size - 1]
+        [@xSize, @ySize] = window.tbgame.map.getTileSize()
+        @dimensions = [model.getCol() * @xSize, model.getRow() * @xSize * 0.866,
+            @xSize, @ySize]
         if model.isOdd()
-            @dimensions[0] += size/2
+            @dimensions[0] += @xSize/2
 
         @bounds = [
             @dimensions[0],
@@ -641,23 +643,34 @@ class TileView
             @dimensions[1] + @dimensions[3]
         ] # sx, sy, ex, ey
 
+        @center = [
+            (@bounds[SX] + @bounds[EX]) / 2,
+            (@bounds[SY] + @bounds[EY]) / 2
+        ]
+
         @setFogColor(model.fog)
 
     setFogColor: (fog) ->
-        @fogColor = if fog then "#FF00FF" else "#000000"
+        @fogColor = if fog then "#AA0000" else "#00AA00"
+        @hexCan = @getHexCanvas(@fogColor, 18)[0]
 
     draw: ->
-        @hex ||= (
-            hex = new Hexagon(window.game, 15).initWithBounds(@bounds)
-        )
-        @ctx.fillStyle = @fogColor
-        @hex.draw()
-
+        @ctx.drawImage(@hexCan[0], @dimensions[SX], @dimensions[SY])
         # show the clickable area
-        @ctx.fillStyle = "rgba(100, 100, 100, 0.2)"
-        @ctx.fillRect(@dimensions[0], @dimensions[1], @dimensions[2], @dimensions[3])
+        #@ctx.fillStyle = "rgba(0,0,220,0.4)"
+        #@ctx.fillRect(@dimensions[0], @dimensions[1], @dimensions[2], @dimensions[3])
 
-
+    getHexCanvas: (color, radius) ->
+        # Save a hexagon to the canvas manager
+        cm = CanvasManager.getInstance()
+        name = "#{color}-#{radius}"
+        [can, ctx] = cm.get(name)
+        if(!can)
+            [can, ctx] = cm.create(name)
+            hex = new Hexagon(ctx, radius).topLeftAt([0,0]) # i shouldn't have to do this
+            ctx.fillStyle = color
+            hex.draw()
+        [can, ctx]
 
 class TileController extends Controller
     constructor: (model, view) ->
@@ -685,11 +698,12 @@ class TileController extends Controller
     reactTo: (clix) =>
         @model.toggleFog()
         window.game.output("(#{@model.row}, #{@model.col}) fog: #{@model.fog}")
-        for tile in window.tbgame.map.surroundingTiles @model, 1, 1
+        for tile in window.tbgame.map.surroundingTiles @model, 0, 0
             tile.toggleFog()
 
     getClix: ->
-        @clix ||= new Clix(@reactTo).initWithBounds(@view.bounds)
+        #@clix ||= new Clix(@reactTo).initWithBounds(@view.bounds)
+        @clix ||= new CircularClix(@reactTo, @view.center[0], @view.center[1], 18)
 
     fogChange: (oldVal, newVal) => 
         console.log "new fog: #{newVal}"
@@ -698,9 +712,13 @@ class TileController extends Controller
     terrainChange: (oldVal, newVal) -> 
         console.log "new terrain: #{newVal}"
 
+class Drawable
+    draw: ->
+        @drawTo(@ctx)
+    drawTo: (ctx) ->
 
 
-class Hexagon
+class Hexagon extends Drawable
     @precomputedSides = [
             [0.8660254037844387, 0.5] # cos and sin 30
             [0, 1]                    # cos and sin 90
@@ -710,33 +728,32 @@ class Hexagon
             [0.8660254037844387,-0.5]
         ]
 
-    constructor: (@game, @radius = 100) ->
+    constructor: (@ctx, @radius = 100) ->
         @x_offset = 0
         @y_offset = 0
         @precomputedWithRadius = Hexagon.precomputedSides.multByConst(@radius)
         @width = @precomputedWithRadius[0][0] * 2
         @height = @radius * 2
 
-    initWithBounds: (bounds) ->
+    topLeftAt: (bounds) ->
         @x_offset = bounds[SX] + (@precomputedWithRadius[0][0])
         @y_offset = bounds[SY] + @radius
         @
 
-    
-    draw: ->
-        ctx = @game.ctx
+    drawTo: (ctx) ->
         #paint each side
-        ctx.beginPath()
+        @ctx.beginPath()
         for i in [0..5]
             x = @x_offset + @precomputedWithRadius[i][0]
             y = @y_offset + @precomputedWithRadius[i][1]
-            if(i == 0) then ctx.moveTo(x, y)
+            if(i == 0) then @ctx.moveTo(x, y)
             next = (i+1)%6
             x = @x_offset + @precomputedWithRadius[next][0]
             y = @y_offset + @precomputedWithRadius[next][1]
-            ctx.lineTo(x, y)
-        ctx.closePath()
-        ctx.fill()
+            @ctx.lineTo(x, y)
+        @ctx.closePath()
+        @ctx.fill()
+        #@ctx.stroke()
 
 class Terrain extends Module
     @include PropertyChangeSupport
@@ -885,7 +902,9 @@ class Map
     endTurn: (player) ->
 
 
-    getTile: (x, y) -> @tiles[x][y]
+    getTile: (x, y) -> 
+        #throw new Err.BadArgException("#{x}, #{y} not in #{@cols}, #{@rows}") unless @isWithinBounds(x,y)
+        @tiles[x][y]
 
     setTile: (x, y, tile) ->
         @tiles[x][y] = tile 
@@ -972,8 +991,29 @@ class Map
     # TODO
     hasAdjacentAlly: (location, player) -> true
 
+    getTileSize: ->
+        [@size, @size / Hexagon.precomputedSides[0][0]]
+
 class Unit
 class Structure
+
+class CanvasManager
+    @size = 100
+    constructor: ->
+        @canvases = {}
+    create: (name) ->
+        newCanvas = $('<canvas />')
+            .width(CanvasManager.size)
+            .height(CanvasManager.size)
+        @canvases[name] = newCanvas
+        [newCanvas, newCanvas[0].getContext('2d')]
+    get: (name) ->
+        canvas = @canvases[name]
+        if canvas then [canvas, canvas[0].getContext('2d')] else [null, null]
+         
+    @getInstance: ->
+        CanvasManager.instance
+    @instance = new CanvasManager
 
 
 ###
@@ -996,11 +1036,8 @@ class ClixManager
         console.log @
         @clixes.push clix
     getClix: (x, y) => 
-        clix = @clixes.findIf( (clix) => @withinBounds(clix, x, y))
+        clix = @clixes.findIf( (clix) -> clix.withinBounds(x, y))
         clix
-    withinBounds: (clix, x, y) ->
-        clix.startX <= x < clix.endX and
-        clix.startY <= y < clix.endY
 
 
 class Clix
@@ -1011,6 +1048,20 @@ class Clix
     initWithBounds: (bounds) ->
         [@startX, @startY, @endX, @endY] = [bounds[SX], bounds[SY], bounds[EX], bounds[EY]]
         @
+    withinBounds: (x, y) ->
+        @startX <= x < @endX and @startY <= y < @endY
+
+class CircularClix extends Clix
+    constructor: (callback, x, y, @radius) ->
+        super(callback, x, y, 0, 0)
+    withinBounds: (x, y) ->
+        dx = Math.abs(x-@startX)
+        dy = Math.abs(y-@startY)
+        # todo.....
+        if dx + dy <= @radius then (console.log "3"; return true)
+        if dx > @radius then (console.log "4"; return false)
+        if dy > @radius then (console.log "5"; return false)
+        if dx.toThe(2) + dy.toThe(2) <= @radius.toThe(2) then true else false
 
 class TurnBasedGameView extends View
     constructor: (model) ->
@@ -1070,6 +1121,7 @@ class TurnBasedGameController extends Controller
         tile.setFog true
     window.game.run()
 
+
 $ ->
     window.game = new Game
 
@@ -1078,4 +1130,3 @@ $ ->
 
     Map.loadMapFromJson 'maps/basic.json', (map) => 
         window.loaded(map)
-

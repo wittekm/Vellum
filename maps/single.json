@@ -1,0 +1,15 @@
+{
+    "author": "wittekm",
+    "name": "oneTile",
+    "desc": "literally just one tile",
+    "rows": 1,
+    "cols": 1,
+    "size": 32,
+    "aliases": {
+        "g": "grass",
+        "w": "water"
+    },
+    "map": [
+        "g"
+    ]
+}
